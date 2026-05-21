@@ -627,6 +627,700 @@ function saveJournal(dk,val){ S.journals[dk]=val; persist('journals',S.journals)
 function sendJournalTg(){ const val=document.getElementById('journal-area')?.value||''; sendTelegram('📓 *Journal — '+today()+'*\n\n'+val); }
 
 // ─── CHAT ─────────────────────────────────────────────────────────────
+function escHtml(t){ return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>"); }
+function renderChat(){
+  const msgs=S.chatHistory.map(m=>`
+    <div class="msg msg-${m.role}">${escHtml(m.content)}</div>`).join('');
+  const empty=!S.chatHistory.length?`
+    <div class="card" style="max-width:500px;">
+      <div style="font-size:15px;font-weight:500;margin-bottom:8px;">Your personal business assistant</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.7;">Your full context is already loaded — the debt, PhotoPARK, Luminati, Kastekust, VEF, the Nordic plan, your daily structure, everything.<br><br>Ask anything. What to work on today. How to pitch VEF. How to message a tester. What to post. How to handle an inquiry.</div>
+    </div>`:'';
+  return `
+    <div id="chat-wrap">
+      <div id="chat-messages">${empty}${msgs}<div id="chat-end"></div></div>
+      <div id="chat-input-area">
+        <textarea id="chat-in" placeholder="Ask your assistant... (Enter to send, Shift+Enter for new line)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+        <button class="primary" onclick="sendChat()" style="height:44px;padding:0 16px;">Send</button>
+      </div>
+    </div>
+  `;
+}
+
+async function sendChat(){
+  const inp=document.getElementById('chat-in');
+  if(!inp||!inp.value.trim()) return;
+  const msg=inp.value.trim(); inp.value='';
+  if(!S.settings.apiKey){ alert('Add your Anthropic API key in Settings first.'); return; }
+  S.chatHistory.push({role:'user',content:msg});
+  persist('chat',S.chatHistory.slice(-60));
+  render();
+  setTimeout(()=>document.getElementById('chat-end')?.scrollIntoView({behavior:'smooth'}),50);
+
+  const thinking=document.createElement('div');
+  thinking.className='msg msg-assistant msg-thinking'; thinking.textContent='Thinking...';
+  document.getElementById('chat-messages')?.appendChild(thinking);
+
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':S.settings.apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-5',max_tokens:1000,system:SYSTEM_PROMPT,messages:S.chatHistory.filter(m=>m.role==='user'||m.role==='assistant').map(m=>({role:m.role,content:m.content}))})
+    });
+    const data=await res.json();
+    console.log('API response:', JSON.stringify(data));
+    let reply='Error.';
+    if(data.content&&Array.isArray(data.content)){
+      reply=data.content.filter(b=>b.type==='text').map(b=>b.text).join('');
+    } else if(data.error){
+      reply='API Error: '+data.error.message;
+    } else if(data.type==='error'){
+      reply='Error: '+JSON.stringify(data);
+    }
+    if(!reply) reply='No response received.';
+    S.chatHistory.push({role:'assistant',content:reply});
+    persist('chat',S.chatHistory.slice(-60));
+  } catch(e){
+    console.log('Fetch error:',e);
+    S.chatHistory.push({role:'assistant',content:'Connection error. Check your API key in Settings.'});
+    persist('chat',S.chatHistory.slice(-60));
+  }
+  render();
+  setTimeout(()=>document.getElementById('chat-end')?.scrollIntoView({behavior:'smooth'}),50);
+}
+
+// ─── SETTINGS ─────────────────────────────────────────────────────────
+function renderSettings(){
+  return `
+    <div style="max-width:520px;display:flex;flex-direction:column;gap:20px;">
+      <div class="card">
+        <div class="section-title">Anthropic API key</div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.6;">Get your key at <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent);">console.anthropic.com</a>. Stored in your browser only — never sent anywhere else.</p>
+        <input type="password" id="s-apikey" value="${S.settings.apiKey}" placeholder="sk-ant-..." style="margin-bottom:8px;" />
+        <button onclick="saveSettings()">Save</button>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Telegram reminders</div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.7;">1. Message <strong>@BotFather</strong> on Telegram → /newbot → get your token<br>2. Message your new bot once, then message <strong>@userinfobot</strong> for your chat ID<br>3. Paste both below and test</p>
+        <input id="s-tgtoken" value="${S.settings.tgToken}" placeholder="Bot token (123456789:ABCdef...)" style="margin-bottom:8px;font-family:var(--mono);font-size:12px;" />
+        <input id="s-tgchat" value="${S.settings.tgChatId}" placeholder="Chat ID (e.g. 123456789)" style="margin-bottom:8px;font-family:var(--mono);font-size:12px;" />
+        <div style="display:flex;gap:8px;">
+          <button onclick="saveSettings()">Save</button>
+          <button onclick="sendTelegram('👋 *Nils OS connected.*\\nYour daily guidance system is live.')">Test send</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Quick sends to Telegram</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button onclick="sendTelegram('☀️ *Morning brief*\\nGoal: ${(S.goals[today()]||'not set').replace(/'/g,'\\\'')}')" style="text-align:left;">Morning brief</button>
+          <button onclick="sendTelegram('🌙 *End of day*\\nGoal was: ${(S.goals[today()]||'not set').replace(/'/g,'\\\'')}')" style="text-align:left;">End of day</button>
+          <button onclick="sendTelegram('📋 *Task update*\\nOpen: ${S.tasks.filter(t=>!t.done).length}\\nDone: ${S.tasks.filter(t=>t.done).length}')" style="text-align:left;">Task progress</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Clear chat history</div>
+        <button onclick="if(confirm('Clear all chat history?')){S.chatHistory=[];persist('chat',S.chatHistory);alert('Cleared.');}">Clear history</button>
+      </div>
+    </div>
+  `;
+}
+function saveSettings(){ S.settings={apiKey:document.getElementById('s-apikey')?.value||'',tgToken:document.getElementById('s-tgtoken')?.value||'',tgChatId:document.getElementById('s-tgchat')?.value||''}; persist('settings',S.settings); alert('Saved.'); }
+
+// ─── TELEGRAM ─────────────────────────────────────────────────────────
+async function sendTelegram(msg){
+  const {tgToken:tok,tgChatId:cid}=S.settings;
+  if(!tok||!cid){ alert('Add Telegram token & chat ID in Settings first.'); return; }
+  try{
+    const r=await fetch(`https://api.telegram.org/bot${tok}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:cid,text:msg,parse_mode:'Markdown'})});
+    const d=await r.json(); d.ok?alert('Sent to Telegram ✓'):alert('Error: '+d.description);
+  } catch{ alert('Telegram failed. Check your token & chat ID.'); }
+}
+
+// ─── AFTER RENDER ─────────────────────────────────────────────────────
+function afterRender(){
+  if(S.view==='chat'){
+    setTimeout(()=>document.getElementById('chat-end')?.scrollIntoView({behavior:'instant'}),30);
+  }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────
+document.getElementById('sidebar-date').textContent=new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'short'});
+document.getElementById('topbar-meta').textContent=formatDate(new Date());
+
+window.nav=nav; window.weekNav=weekNav; window.toggleWeekHabit=toggleWeekHabit;
+window.openDayDetail=openDayDetail; window.togglePhase=togglePhase;
+window.addTask=addTask; window.toggleTask=toggleTask; window.deleteTask=deleteTask;
+window.setGoal=setGoal; window.setBlockTask=setBlockTask; window.toggleTodayHabit=toggleTodayHabit;
+window.saveJournal=saveJournal; window.sendJournalTg=sendJournalTg;
+window.sendChat=sendChat; window.saveSettings=saveSettings; window.sendTelegram=sendTelegram;
+
+render();
+</script>
+</body>
+</html>  .alert-blue { background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2); color: #93c5fd; }
+
+  /* TODAY */
+  .block-row { display: grid; grid-template-columns: 80px 1fr; gap: 12px; align-items: start; margin-bottom: 6px; }
+  .block-time { font-size: 12px; font-weight: 500; padding-top: 2px; }
+  .block-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .block-card.active { border-color: var(--accent); background: rgba(232,160,32,.05); }
+  .block-card.danger { border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.05); }
+  .block-label { font-size: 13px; font-weight: 500; margin-bottom: 3px; }
+  .block-note { font-size: 11px; color: var(--text2); line-height: 1.4; margin-bottom: 6px; }
+  .block-task-row { display: flex; gap: 6px; align-items: center; }
+
+  /* WEEK */
+  .week-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 5px; margin-bottom: 20px; }
+  .day-cell { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 8px; cursor: pointer; min-height: 110px; transition: border-color .15s; }
+  .day-cell:hover { border-color: #444; }
+  .day-cell.today { border-color: var(--accent); background: rgba(232,160,32,.05); }
+  .day-cell.selected { border-color: var(--blue); }
+  .day-name { font-size: 10px; color: var(--text3); text-align: center; margin-bottom: 3px; }
+  .day-num { font-size: 15px; font-weight: 500; text-align: center; margin-bottom: 6px; }
+  .day-score { text-align: center; margin-bottom: 4px; }
+  .day-task-pill { font-size: 9px; padding: 2px 5px; border-radius: 3px; margin-bottom: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* HABITS */
+  .habit-row { display: grid; grid-template-columns: 200px repeat(7,1fr); gap: 4px; align-items: center; margin-bottom: 5px; }
+  .habit-label { font-size: 11px; color: var(--text2); }
+  .habit-dot { height: 24px; border-radius: 4px; background: var(--bg2); border: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; transition: all .15s; }
+  .habit-dot.done { background: rgba(34,197,94,.1); border-color: rgba(34,197,94,.3); color: var(--green); }
+
+  /* CHAT */
+  #chat-wrap { display: flex; flex-direction: column; height: calc(100vh - 60px); }
+  #chat-messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 78%; padding: 11px 14px; border-radius: var(--radius); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+  .msg-user { background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.2); color: #bfdbfe; align-self: flex-end; }
+  .msg-assistant { background: var(--bg2); border: 1px solid var(--border); color: var(--text); align-self: flex-start; }
+  .msg-thinking { color: var(--text3); font-style: italic; font-size: 13px; }
+  #chat-input-area { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+  #chat-input-area textarea { resize: none; height: 44px; line-height: 1.4; }
+
+  /* ROADMAP */
+  .roadmap-phase { margin-bottom: 24px; }
+  .phase-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-sm); cursor: pointer; }
+  .phase-content { display: none; }
+  .phase-content.open { display: block; }
+  .track-section { margin-bottom: 10px; }
+  .track-header { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; padding: 4px 0; }
+  .step-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .step-num { font-size: 11px; color: var(--text3); min-width: 20px; padding-top: 1px; }
+  .step-text { font-size: 13px; color: var(--text2); line-height: 1.5; }
+
+  /* TASKS */
+  .task-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; }
+  .task-item.done-item { opacity: .5; }
+  .task-cb { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border2); background: transparent; cursor: pointer; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; transition: all .15s; }
+  .task-cb.checked { background: var(--green); border-color: var(--green); }
+  .task-text { flex: 1; font-size: 13px; color: var(--text); line-height: 1.4; }
+
+  /* SETTINGS */
+  .setting-group { margin-bottom: 24px; }
+  .setting-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; display: block; }
+
+  /* SCHEDULE GRID */
+  .schedule-table { width: 100%; border-collapse: collapse; }
+  .schedule-table th { font-size: 11px; color: var(--text3); font-weight: 500; text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .schedule-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+  .schedule-table tr:hover td { background: var(--bg2); }
+  .track-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+
+  @media(max-width:700px){
+    #sidebar { display: none; }
+    .grid4 { grid-template-columns: 1fr 1fr; }
+    .grid2, .grid3 { grid-template-columns: 1fr; }
+    .week-grid { grid-template-columns: repeat(4,1fr); }
+    .habit-row { grid-template-columns: 130px repeat(7,1fr); }
+  }
+</style>
+</head>
+<body>
+<div id="layout">
+  <div id="sidebar">
+    <div id="sidebar-logo">
+      <h1>Nils OS</h1>
+      <p id="sidebar-date"></p>
+    </div>
+    <button class="nav-item active" onclick="nav('today')" id="nav-today"><span class="nav-icon">◉</span> Today</button>
+    <button class="nav-item" onclick="nav('week')" id="nav-week"><span class="nav-icon">▦</span> Week</button>
+    <button class="nav-item" onclick="nav('schedule')" id="nav-schedule"><span class="nav-icon">⏱</span> Schedule</button>
+    <button class="nav-item" onclick="nav('roadmap')" id="nav-roadmap"><span class="nav-icon">↗</span> Roadmap</button>
+    <button class="nav-item" onclick="nav('tasks')" id="nav-tasks"><span class="nav-icon">☑</span> Tasks</button>
+    <button class="nav-item" onclick="nav('journal')" id="nav-journal"><span class="nav-icon">✎</span> Journal</button>
+    <button class="nav-item" onclick="nav('chat')" id="nav-chat"><span class="nav-icon">◈</span> Assistant</button>
+    <button class="nav-item" onclick="nav('settings')" id="nav-settings" style="margin-top:auto;"><span class="nav-icon">⚙</span> Settings</button>
+  </div>
+  <div id="main">
+    <div id="topbar">
+      <div>
+        <div id="topbar-title">Today</div>
+        <div id="topbar-meta"></div>
+      </div>
+      <div id="topbar-actions"></div>
+    </div>
+    <div id="content"></div>
+  </div>
+</div>
+
+<script>
+// ─── STATE ───────────────────────────────────────────────────────────
+const S = {
+  view: 'today',
+  weekOffset: 0,
+  tasks: JSON.parse(localStorage.getItem('nos-tasks')||'[]'),
+  journals: JSON.parse(localStorage.getItem('nos-journals')||'{}'),
+  weekData: JSON.parse(localStorage.getItem('nos-weekdata')||'{}'),
+  settings: JSON.parse(localStorage.getItem('nos-settings')||'{"apiKey":"","tgToken":"","tgChatId":""}'),
+  chatHistory: JSON.parse(localStorage.getItem('nos-chat')||'[]'),
+  goals: JSON.parse(localStorage.getItem('nos-goals')||'{}'),
+};
+function persist(key, val){ localStorage.setItem('nos-'+key, JSON.stringify(val)); }
+
+// ─── CONSTANTS ───────────────────────────────────────────────────────
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const TRACKS = ['','PhotoPARK','Luminati','Kastekust','Personal brand','Admin'];
+const TRACK_COLOR = { 'PhotoPARK':'#4ade80','Luminati':'#60a5fa','Kastekust':'#fb923c','Personal brand':'#a3a3a3','Admin':'#f87171','':'#555' };
+const TRACK_BG = { 'PhotoPARK':'#14532d','Luminati':'#1e3a5f','Kastekust':'#451a03','Personal brand':'#2a2a2a','Admin':'#3f0f0f','':'#1a1a1a' };
+
+const BLOCKS = [
+  {time:'05:30',label:'Wake & prime',note:'Write one goal. Phone face down.',editable:false,type:'fixed'},
+  {time:'06:30',label:'CrossFit',note:'Non-negotiable.',editable:false,type:'fixed'},
+  {time:'08:30',label:'Recovery & fuel',note:'Eat, shower. No work yet.',editable:false,type:'fixed'},
+  {time:'09:15',label:'Strategic block',note:'PHONE IN ANOTHER ROOM. One pre-decided task only.',editable:true,type:'danger'},
+  {time:'11:30',label:'Sales & outreach',note:'Calls, follow-ups, Nordic outreach.',editable:true,type:'normal'},
+  {time:'13:00',label:'Lunch & reset',note:'Away from screen. Walk if possible.',editable:false,type:'fixed'},
+  {time:'14:00',label:'Projects & ops',note:'Kastekust, client work, coordination.',editable:true,type:'normal'},
+  {time:'16:30',label:'Wrap & plan tomorrow',note:'Write tomorrow\'s tasks NOW. Kills morning procrastination.',editable:true,type:'warn'},
+  {time:'19:00',label:'Evening',note:'Personal time. Protect it.',editable:false,type:'fixed'},
+  {time:'22:00',label:'Wind down',note:'Screen off by 22:30.',editable:false,type:'fixed'},
+];
+
+const HABITS = [
+  {id:'noscroll',label:'No phone in strategic block'},
+  {id:'goal',label:'One goal written at 05:30'},
+  {id:'cf',label:'CrossFit done'},
+  {id:'lunch',label:'Lunch away from screen'},
+  {id:'wrap',label:'Tomorrow planned before close'},
+  {id:'sleep',label:'Screen off by 22:30'},
+];
+
+const WEEK_SCHEDULE = [
+  {day:'Mon / Wed',time:'09:15–11:30',track:'PhotoPARK',task:'Pitch deck & demo tool. One deliverable pre-decided night before.',color:'#4ade80'},
+  {day:'Tue / Thu',time:'09:15–11:30',track:'Luminati',task:'Presets, tester outreach, feedback loop, content.',color:'#60a5fa'},
+  {day:'Fri',time:'09:15–11:30',track:'Review',task:'Weekly review. What moved? Plan next week\'s blocks.',color:'#a855f7'},
+  {day:'Mon–Fri',time:'11:30–13:00',track:'Sales',task:'Nordic outreach, Kastekust proposals, client calls.',color:'#f59e0b'},
+  {day:'Mon–Fri',time:'14:00–16:30',track:'Kastekust',task:'All event ops, inquiries, project management, freelancers.',color:'#fb923c'},
+  {day:'Mon–Fri',time:'16:30–17:00',track:'Wrap',task:'Plan tomorrow\'s tasks. Kastekust follow-ups.',color:'#555'},
+  {day:'Sat',time:'Morning',track:'Luminati',task:'Deeper build work. No client interruptions.',color:'#60a5fa'},
+  {day:'Sun',time:'Morning',track:'Recovery',task:'Rest, reflect. Optional: read about your space.',color:'#2a2a2a'},
+];
+
+const ROADMAP = [
+  { phase:'Now — 4 weeks', color:'#e8a020', bg:'rgba(232,160,32,.08)', tracks:[
+    {name:'PhotoPARK', color:'#4ade80', steps:['Cinema gig ends → book VEF meeting within 48 hours','Build pitch deck: experience → tech → market → deal → founder','Build AR demo tool so VEF feels the magic viewpoint','Disclose debt + COO situation proactively in pitch — frame as why the deal structure makes sense','Model winter/low-season revenue — VEF will ask']},
+    {name:'Luminati', color:'#60a5fa', steps:['Build 12–15 named presets using your lighting knowledge','Fix mixed currency — pick EUR throughout','Cap lifetime deal at 200 units on pricing page','Add ToS & Privacy Policy via iubenda.com — one afternoon','Message 3 of the 50 Filipino testers personally today','Add feedback buttons (perfect/close/wrong) to render results']},
+    {name:'Kastekust', color:'#fb923c', steps:['List every confirmed, in-conversation, potential summer booking','Deliver every booked event at full quality','Contact 2–3 corporate clients about annual agreements','Find one part-time accountant for tax & finance admin']},
+    {name:'Personal brand', color:'#a3a3a3', steps:['Write one paragraph: what Nils Vilnis does and for whom','Publish one piece of content — LinkedIn or Instagram','Don\'t launch a campaign. Just start talking.']},
+    {name:'Foundation', color:'#a855f7', steps:['Continue therapy. Non-negotiable.','Protect 09:15 block every day. Phone in another room.','One goal written every morning. One reflection every evening.']},
+  ]},
+  { phase:'Month 2–4', color:'#3b82f6', bg:'rgba(59,130,246,.08)', tracks:[
+    {name:'PhotoPARK', color:'#4ade80', steps:['VEF deal signed or go/no-go. No limbo.','If yes: AR tech build begins. COO onboarded.','First revenue model validated — corporate + tourism']},
+    {name:'Luminati', color:'#60a5fa', steps:['Target 50 paying users across Philippines, India, Brazil','Implement rejection sampling — run 2–3 variations silently, show best','Publish monthly revenue number publicly','Find one ML engineer to consult on training layer','Add data consent to ToS — log every render as training data']},
+    {name:'Kastekust', color:'#fb923c', steps:['Summer closes. Pay what you can on debt.','2–3 annual agreements signed','No new service investments — cash engine only']},
+    {name:'Personal brand', color:'#a3a3a3', steps:['One post per week. Document the building.','First Nordic outreach — one conversation per week']},
+  ]},
+  { phase:'Month 4–8', color:'#22c55e', bg:'rgba(34,197,94,.08)', tracks:[
+    {name:'PhotoPARK', color:'#4ade80', steps:['If deal closed: physical build underway. AR tech v1 in dev.','First test experiences with photographers and press','SaaS licensing conversations with museums and tourism internationally']},
+    {name:'Luminati', color:'#60a5fa', steps:['100+ paying users. MRR visible and growing.','Begin training proprietary correction layer from logged data','File patent on no-prompt lighting interface concept']},
+    {name:'Nils Vilnis', color:'#a3a3a3', steps:['Speaking at one photography or creative tech event','Visible in Nordic and European creative circles']},
+  ]},
+  { phase:'Month 8–18 — Exit window', color:'#a855f7', bg:'rgba(168,85,247,.08)', tracks:[
+    {name:'PhotoPARK', color:'#4ade80', steps:['Park open. Revenue from consumer, corporate, events.','AR tech live. SaaS licensing pipeline active.','You are creative director — not operations manager.']},
+    {name:'Luminati exit', color:'#60a5fa', steps:['Product Hunt launch. Photography press coverage.','Proprietary model trained. Dataset documented as IP.','Connect with tech M&A advisor — success fee only','Target: €500K–€2M acquisition by Adobe, Luminar, Capture One, or Canva']},
+    {name:'Nils Vilnis', color:'#a3a3a3', steps:['Known name outside Latvia. European agencies find you.','Courses live. Speaking. Consulting.','Creating from stability — not survival.']},
+  ]},
+];
+
+const SYSTEM_PROMPT = `You are Nils Vilnis's personal business coach and operating system assistant. You know everything about him.
+
+ABOUT NILS:
+- 20+ year advertising/portrait photographer, based in Riga, Latvia
+- Runs Kastekust.lv — custom photobooths, AI activations, LED wall studio
+- Major clients: Swedbank, SEB, Red Bull, LMT, Bite, Tet, Philip Morris, Maxima
+- ~€100K in debt (€70K ALTUM business, €30K private loans/guarantees)
+- Previous COO partnership ended badly — COO left and sued him
+- LED studio closed due to debt
+
+PROJECTS & PRIORITIES:
+1. PhotoPARK (PRIORITY #1) — First immersive cinematic experience park in the Baltics. 400m² space at VEF Kvartāls combining forced perspective sets + 3x6m LED volume + proprietary AR anamorphic platform. AI post-production. VEF Kvartāls is interested investor. Deal structure: €225K investment (€70K clears ALTUM debt, rest funds build), salary €3-5K/month on balance, COO from VEF side. AR tech still needs to be built — pitch is for the vision + Kastekust's tech foundation.
+2. Luminati (luminati.app) — AI lighting tool for photographers. No prompts — just lighting controls. Runs on Gemini. Working product with payment system. ~50 Filipino alpha testers. Plans: add presets, cap lifetime deal at 200, fix currency to EUR, add feedback loop for training data. Exit goal: sell to Adobe/Luminar/Capture One for €500K–€2M.
+3. Kastekust events — Current cash engine. Freelance team. Summer season now. Goal: close events, get paid, convert 2-3 clients to annual agreements. Afternoons only (14:00–16:30).
+4. Nils Vilnis personal brand — International positioning. One post/week. Compounding asset.
+
+DAILY STRUCTURE:
+05:30 Wake & prime (journal, one goal, no phone)
+06:30–08:30 CrossFit (non-negotiable, every day)
+08:30–09:15 Recovery & fuel
+09:15–11:30 STRATEGIC BLOCK (phone in another room — Mon/Wed=PhotoPARK, Tue/Thu=Luminati, Fri=review)
+11:30–13:00 Sales & outreach
+13:00–14:00 Lunch & reset (away from screen)
+14:00–16:30 Projects & ops (ALL Kastekust here)
+16:30–17:00 Wrap & plan tomorrow
+19:00 Evening personal time
+22:00 Wind down, screen off 22:30
+
+PERSONAL CONTEXT:
+- Has anxiety and has been in survival mode for years
+- Recently started therapy
+- Struggles with: phone scrolling during work hours, procrastination (opens task then drifts to phone)
+- CrossFit every morning — proof he has discipline when committed
+- Wants to be the creative/visionary, not the operator
+- Wants to be known internationally as Nils Vilnis (personal brand), not just Kastekust
+- Dreams of creating from stability, not survival
+
+BEHAVIORAL RULES FOR YOU:
+- Be direct and practical. No fluff.
+- Reference his specific context — don't give generic advice
+- When he's anxious or spiraling, ground him in the immediate next action
+- Call out avoidance patterns if you see them
+- Remind him: CrossFit proves he has discipline. Same muscle, different arena.
+- Short answers unless depth is needed
+- If he asks what to work on: remind him of the weekly schedule (Mon/Wed=PhotoPARK, Tue/Thu=Luminati, Kastekust=afternoons only)`;
+
+// ─── UTILS ───────────────────────────────────────────────────────────
+function today() { return new Date().toISOString().split('T')[0]; }
+function getWeekDays(offset=0){
+  const d=new Date(); const day=d.getDay()||7;
+  d.setDate(d.getDate()-day+1+offset*7);
+  return Array.from({length:7},(_,i)=>{ const x=new Date(d); x.setDate(d.getDate()+i); return x; });
+}
+function formatDate(d){ return d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}); }
+function formatTime(){ const n=new Date(); return n.getHours().toString().padStart(2,'0')+':'+n.getMinutes().toString().padStart(2,'0'); }
+function getCurrentBlock(){
+  const now=new Date(); const mins=now.getHours()*60+now.getMinutes();
+  const toM=t=>{ const [h,m]=t.split(':').map(Number); return h*60+m; };
+  for(let i=0;i<BLOCKS.length;i++){
+    const end=i+1<BLOCKS.length?toM(BLOCKS[i+1].time):1440;
+    if(mins>=toM(BLOCKS[i].time)&&mins<end) return BLOCKS[i].key||BLOCKS[i].time;
+  }
+  return null;
+}
+function initDayData(dk){
+  if(!S.weekData[dk]){
+    S.weekData[dk]={habits:{},tasks:{}};
+    BLOCKS.forEach(b=>{ S.weekData[dk].tasks[b.time]={text:'',track:''}; });
+  }
+}
+function getHabitScore(dk){ return HABITS.filter(h=>S.weekData[dk]?.habits?.[h.id]).length; }
+
+// ─── NAVIGATION ──────────────────────────────────────────────────────
+function nav(v){
+  S.view=v;
+  document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
+  document.getElementById('nav-'+v)?.classList.add('active');
+  const titles={today:'Today',week:'Week',schedule:'Weekly schedule',roadmap:'Roadmap',tasks:'Tasks',journal:'Journal',chat:'Assistant',settings:'Settings'};
+  document.getElementById('topbar-title').textContent=titles[v]||v;
+  document.getElementById('topbar-meta').textContent=v==='today'?formatDate(new Date()):'';
+  document.getElementById('topbar-actions').innerHTML='';
+  render();
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────
+function render(){
+  const el=document.getElementById('content');
+  const views={today:renderToday,week:renderWeek,schedule:renderSchedule,roadmap:renderRoadmap,tasks:renderTasks,journal:renderJournal,chat:renderChat,settings:renderSettings};
+  el.innerHTML=(views[S.view]||renderToday)();
+  afterRender();
+}
+
+// ─── TODAY ───────────────────────────────────────────────────────────
+function renderToday(){
+  const dk=today();
+  initDayData(dk);
+  const d=S.weekData[dk];
+  const goal=S.goals[dk]||'';
+  const curBlock=getCurrentBlock();
+  const score=getHabitScore(dk);
+  const tod=new Date();
+  const dayName=tod.toLocaleDateString('en-GB',{weekday:'long'});
+  const isMonWed=dayName==='Monday'||dayName==='Wednesday';
+  const isTueThu=dayName==='Tuesday'||dayName==='Thursday';
+  const focusTrack=isMonWed?'PhotoPARK':isTueThu?'Luminati':dayName==='Friday'?'Review':'—';
+
+  const blocks=BLOCKS.map(bl=>{
+    const isCur=bl.time===curBlock;
+    const tv=d.tasks[bl.time]||{text:'',track:''};
+    const borderColor=bl.type==='danger'?'rgba(239,68,68,.5)':bl.type==='warn'?'rgba(232,160,32,.5)':isCur?'rgba(59,130,246,.4)':'var(--border)';
+    const bgColor=bl.type==='danger'?'rgba(239,68,68,.04)':bl.type==='warn'?'rgba(232,160,32,.04)':isCur?'rgba(59,130,246,.04)':'var(--bg2)';
+    const timeColor=bl.type==='danger'?'#f87171':bl.type==='warn'?'#fcd34d':isCur?'#93c5fd':'var(--text3)';
+    const taskInput=bl.editable?`
+      <div class="block-task-row">
+        <input value="${(tv.text||'').replace(/"/g,'&quot;')}" onchange="setBlockTask('${dk}','${bl.time}','text',this.value)" placeholder="${bl.type==='warn'?'Write tomorrow\'s tasks here...':'Task for this block...'}" style="flex:1;font-size:12px;" />
+        <select onchange="setBlockTask('${dk}','${bl.time}','track',this.value)" style="width:110px;font-size:11px;background:${TRACK_BG[tv.track]};color:${TRACK_COLOR[tv.track]};">
+          ${TRACKS.map(t=>`<option value="${t}"${tv.track===t?' selected':''}>${t||'No track'}</option>`).join('')}
+        </select>
+      </div>`:'';
+    const badge=bl.type==='danger'?`<span class="badge" style="background:rgba(239,68,68,.1);color:#f87171;font-size:10px;margin-left:8px;">📵 phone out</span>`:isCur?`<span class="badge" style="background:rgba(59,130,246,.1);color:#93c5fd;font-size:10px;margin-left:8px;">● now</span>`:'';
+    return `<div class="block-row">
+      <div class="block-time" style="color:${timeColor};">${bl.time}</div>
+      <div class="block-card" style="border-color:${borderColor};background:${bgColor};">
+        <div class="block-label">${bl.label}${badge}</div>
+        <div class="block-note">${bl.note}</div>
+        ${tv.text?`<div style="margin-bottom:${bl.editable?'6px':'0'};"><span class="badge tag-${(tv.track||'').toLowerCase().replace(' ','-')}">${tv.track||'task'}: ${tv.text}</span></div>`:''}
+        ${taskInput}
+      </div>
+    </div>`;
+  }).join('');
+
+  const habitsHtml=HABITS.map(h=>{
+    const done=d.habits[h.id];
+    return `<div onclick="toggleTodayHabit('${h.id}')" style="cursor:pointer;padding:9px 12px;background:${done?'rgba(34,197,94,.08)':'var(--bg2)'};border:1px solid ${done?'rgba(34,197,94,.25)':'var(--border)'};border-radius:var(--radius-sm);font-size:12px;color:${done?'#86efac':'var(--text2)'};display:flex;align-items:center;gap:8px;">
+      <span style="font-size:14px;">${done?'✓':'○'}</span>${h.label}
+    </div>`;
+  }).join('');
+
+  const scoreMsg=score===6?'Perfect day ✦':score>=4?'Strong day':score>=2?'Building...':'Start with one';
+  const scoreColor=score===6?'#4ade80':score>=4?'#60a5fa':score>=2?'#f59e0b':'var(--text3)';
+
+  return `
+    <div class="alert alert-red" style="display:flex;align-items:center;gap:10px;"><span>📵</span><span><strong>09:15–11:30:</strong> Phone goes in another room. Not silent. Another room. Today's strategic focus: <strong>${focusTrack}</strong></span></div>
+
+    <div style="margin-bottom:20px;">
+      <div class="section-title">Today's goal</div>
+      <input value="${goal.replace(/"/g,'&quot;')}" onchange="setGoal('${dk}',this.value)" placeholder="What makes today a win? Write one thing." style="font-size:16px;font-weight:500;background:var(--bg2);padding:12px 14px;" />
+    </div>
+
+    <div style="margin-bottom:24px;">
+      <div class="section-title">Time blocks</div>
+      ${blocks}
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <div class="section-title">Habits — ${score}/${HABITS.length} <span style="color:${scoreColor};margin-left:6px;">${scoreMsg}</span></div>
+      <div class="grid2" style="gap:6px;">${habitsHtml}</div>
+    </div>
+  `;
+}
+
+function setGoal(dk,val){ S.goals[dk]=val; persist('goals',S.goals); }
+function setBlockTask(dk,time,field,val){ initDayData(dk); S.weekData[dk].tasks[time][field]=val; persist('weekdata',S.weekData); }
+function toggleTodayHabit(hid){ const dk=today(); initDayData(dk); S.weekData[dk].habits[hid]=!S.weekData[dk].habits[hid]; persist('weekdata',S.weekData); render(); }
+
+// ─── WEEK ─────────────────────────────────────────────────────────────
+function renderWeek(){
+  const days=getWeekDays(S.weekOffset);
+  const td=today();
+  days.forEach(d=>initDayData(d.toISOString().split('T')[0]));
+
+  const dayCells=days.map((day,i)=>{
+    const dk=day.toISOString().split('T')[0];
+    const isT=dk===td;
+    const score=getHabitScore(dk);
+    const tasks=Object.entries(S.weekData[dk]?.tasks||{}).filter(([,v])=>v.text).slice(0,4);
+    return `<div class="day-cell${isT?' today':''}" onclick="openDayDetail('${dk}')">
+      <div class="day-name">${DAYS[i]}</div>
+      <div class="day-num" style="color:${isT?'var(--accent)':'var(--text)'};">${day.getDate()}</div>
+      ${score>0?`<div class="day-score"><span class="badge" style="background:rgba(34,197,94,.1);color:#4ade80;font-size:9px;">${score}/${HABITS.length}</span></div>`:''}
+      ${tasks.map(([,v])=>`<div class="day-task-pill" style="background:${TRACK_BG[v.track]};color:${TRACK_COLOR[v.track]};">${v.text}</div>`).join('')}
+    </div>`;
+  }).join('');
+
+  const wk=getWeekDays(S.weekOffset);
+  const wLabel=`${wk[0].toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${wk[6].toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`;
+
+  const habitRows=HABITS.map(h=>`
+    <div class="habit-row">
+      <div class="habit-label">${h.label}</div>
+      ${days.map(day=>{
+        const dk=day.toISOString().split('T')[0];
+        const done=S.weekData[dk]?.habits?.[h.id];
+        return `<div class="habit-dot${done?' done':''}" onclick="toggleWeekHabit('${dk}','${h.id}')">${done?'✓':''}</div>`;
+      }).join('')}
+    </div>`).join('');
+
+  const dayDetail=S.selectedDayDetail?renderDayDetail(S.selectedDayDetail):'';
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div style="font-size:13px;color:var(--text2);">${wLabel}</div>
+      <div style="display:flex;gap:6px;">
+        <button onclick="weekNav(-1)">‹</button>
+        <button onclick="weekNav(0)">This week</button>
+        <button onclick="weekNav(1)">›</button>
+      </div>
+    </div>
+    <div class="week-grid">${dayCells}</div>
+    <div class="section-title">Habit streak</div>
+    ${habitRows}
+    ${dayDetail}
+  `;
+}
+
+function weekNav(v){ S.weekOffset=v===0?0:S.weekOffset+v; S.selectedDayDetail=null; render(); }
+function toggleWeekHabit(dk,hid){ initDayData(dk); S.weekData[dk].habits[hid]=!S.weekData[dk].habits[hid]; persist('weekdata',S.weekData); render(); }
+function openDayDetail(dk){ S.selectedDayDetail=S.selectedDayDetail===dk?null:dk; render(); }
+
+function renderDayDetail(dk){
+  initDayData(dk);
+  const d=S.weekData[dk];
+  const day=new Date(dk);
+  const blocks=BLOCKS.filter(b=>b.editable).map(bl=>{
+    const tv=d.tasks[bl.time]||{text:'',track:''};
+    return `<div style="margin-bottom:8px;">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${bl.time} — ${bl.label}</div>
+      <div style="display:flex;gap:6px;">
+        <input value="${(tv.text||'').replace(/"/g,'&quot;')}" onchange="setBlockTask('${dk}','${bl.time}','text',this.value)" placeholder="Task..." style="flex:1;font-size:12px;" />
+        <select onchange="setBlockTask('${dk}','${bl.time}','track',this.value)" style="width:100px;font-size:11px;background:${TRACK_BG[tv.track]};color:${TRACK_COLOR[tv.track]};">
+          ${TRACKS.map(t=>`<option value="${t}"${tv.track===t?' selected':''}>${t||'No track'}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="card" style="margin-top:16px;">
+    <div style="font-size:14px;font-weight:500;margin-bottom:14px;">${day.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'})}</div>
+    ${blocks}
+  </div>`;
+}
+
+// ─── SCHEDULE ─────────────────────────────────────────────────────────
+function renderSchedule(){
+  const rows=WEEK_SCHEDULE.map(r=>`
+    <tr>
+      <td style="color:var(--text2);font-size:12px;">${r.day}</td>
+      <td style="color:var(--text3);font-family:var(--mono);font-size:11px;">${r.time}</td>
+      <td><span class="badge" style="background:${TRACK_BG[r.track]||'#1a1a1a'};color:${r.color};">${r.track}</span></td>
+      <td style="color:var(--text2);font-size:13px;">${r.task}</td>
+    </tr>`).join('');
+
+  return `
+    <div class="alert alert-amber" style="margin-bottom:20px;">
+      <strong>The rule:</strong> Kastekust inquiries and operations live at 14:00–16:30 only. Never before. Mornings are protected for the future.
+    </div>
+    <div class="alert alert-blue" style="margin-bottom:20px;">
+      <strong>Anti-scroll rule:</strong> 09:15–11:30 phone in another room. Task is pre-decided the night before in Wrap block (16:30). No decisions in the morning = no drift.
+    </div>
+    <div class="card">
+      <table class="schedule-table">
+        <thead><tr><th>Day</th><th>Time</th><th>Track</th><th>Focus</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:20px;" class="grid2">
+      <div class="card">
+        <div class="section-title">PhotoPARK mornings (Mon/Wed)</div>
+        <p style="font-size:13px;color:var(--text2);line-height:1.6;">Pitch deck → demo tool → VEF meeting prep. One specific deliverable pre-written at 16:30 the night before. No scope creep into other projects.</p>
+      </div>
+      <div class="card">
+        <div class="section-title">Luminati mornings (Tue/Thu)</div>
+        <p style="font-size:13px;color:var(--text2);line-height:1.6;">Presets, tester outreach, feedback system, content creation. When PhotoPARK deal closes, this gets more time.</p>
+      </div>
+      <div class="card">
+        <div class="section-title">Kastekust (every afternoon)</div>
+        <p style="font-size:13px;color:var(--text2);line-height:1.6;">All inquiries, event management, freelancer coordination, proposals, client calls. This is the cash engine. Protect it — but contain it to afternoons.</p>
+      </div>
+      <div class="card">
+        <div class="section-title">Friday review</div>
+        <p style="font-size:13px;color:var(--text2);line-height:1.6;">Weekly score. What moved? What's blocked? Plan next week's block tasks. This is the most underrated session of the week.</p>
+      </div>
+    </div>
+  `;
+}
+
+// ─── ROADMAP ─────────────────────────────────────────────────────────
+function renderRoadmap(){
+  const phases=ROADMAP.map((phase,pi)=>`
+    <div class="roadmap-phase">
+      <div class="phase-header" onclick="togglePhase(${pi})" style="background:${phase.bg};border:1px solid rgba(255,255,255,.05);">
+        <span style="font-size:16px;font-weight:500;color:${phase.color};">${phase.phase}</span>
+        <span id="phase-arrow-${pi}" style="margin-left:auto;color:${phase.color};">${pi===0?'▼':'▶'}</span>
+      </div>
+      <div class="phase-content${pi===0?' open':''}" id="phase-${pi}">
+        ${phase.tracks.map(track=>`
+          <div class="track-section card" style="margin-bottom:8px;border-left:3px solid ${track.color};">
+            <div class="track-header" style="color:${track.color};">${track.name}</div>
+            ${track.steps.map((s,i)=>`
+              <div class="step-row">
+                <div class="step-num">${i+1}</div>
+                <div class="step-text">${s}</div>
+              </div>`).join('')}
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+
+  return `
+    <div class="alert alert-green" style="margin-bottom:20px;">
+      <strong>North star:</strong> PhotoPARK closes with VEF → debt cleared, salary live → you create from stability → Luminati grows toward exit → Nils Vilnis becomes the internationally known creative technologist he already is.
+    </div>
+    ${phases}
+  `;
+}
+function togglePhase(i){
+  const el=document.getElementById('phase-'+i);
+  const ar=document.getElementById('phase-arrow-'+i);
+  const open=el.classList.contains('open');
+  el.classList.toggle('open',!open);
+  ar.textContent=open?'▶':'▼';
+}
+
+// ─── TASKS ────────────────────────────────────────────────────────────
+function renderTasks(){
+  const pending=S.tasks.filter(t=>!t.done);
+  const done=S.tasks.filter(t=>t.done);
+  const byTrack={};
+  TRACKS.filter(t=>t).forEach(t=>{byTrack[t]=pending.filter(task=>task.track===t);});
+  const noTrack=pending.filter(t=>!t.track);
+
+  const taskItem=(t)=>`
+    <div class="task-item${t.done?' done-item':''}">
+      <div class="task-cb${t.done?' checked':''}" onclick="toggleTask(${t.id})">${t.done?'✓':''}</div>
+      <div class="task-text">${t.text}</div>
+      <span class="badge tag-${(t.track||'').toLowerCase().replace(' ','-')}" style="font-size:10px;flex-shrink:0;">${t.track||'—'}</span>
+      <button onclick="deleteTask(${t.id})" style="padding:2px 6px;border:none;background:transparent;color:var(--text3);font-size:16px;">×</button>
+    </div>`;
+
+  const trackSections=TRACKS.filter(t=>t).map(t=>{
+    const ts=pending.filter(task=>task.track===t);
+    if(!ts.length) return '';
+    return `<div style="margin-bottom:16px;"><div class="section-title" style="color:${TRACK_COLOR[t]};">${t} (${ts.length})</div>${ts.map(taskItem).join('')}</div>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;gap:8px;margin-bottom:20px;">
+      <input id="new-task-input" placeholder="Add a task..." onkeydown="if(event.key==='Enter')addTask()" style="flex:1;" />
+      <select id="new-task-track" style="width:120px;">
+        ${TRACKS.map(t=>`<option value="${t}">${t||'No track'}</option>`).join('')}
+      </select>
+      <button class="primary" onclick="addTask()">Add</button>
+    </div>
+    ${trackSections}
+    ${noTrack.length?`<div style="margin-bottom:16px;"><div class="section-title">Untracked (${noTrack.length})</div>${noTrack.map(taskItem).join('')}</div>`:''}
+    ${done.length?`<div style="margin-top:20px;"><div class="section-title">Done (${done.length})</div>${done.map(taskItem).join('')}</div>`:''}
+    ${S.tasks.length===0?`<div class="card" style="text-align:center;color:var(--text3);padding:40px;">No tasks yet. Add your first one above.</div>`:''}
+  `;
+}
+function addTask(){ const i=document.getElementById('new-task-input'); const tr=document.getElementById('new-task-track'); if(!i.value.trim()) return; S.tasks.push({id:Date.now(),text:i.value.trim(),track:tr.value,done:false}); i.value=''; persist('tasks',S.tasks); render(); }
+function toggleTask(id){ const t=S.tasks.find(t=>t.id===id); if(t) t.done=!t.done; persist('tasks',S.tasks); render(); }
+function deleteTask(id){ S.tasks=S.tasks.filter(t=>t.id!==id); persist('tasks',S.tasks); render(); }
+
+// ─── JOURNAL ─────────────────────────────────────────────────────────
+function renderJournal(){
+  const dk=today();
+  const val=S.journals[dk]||'';
+  return `
+    <div style="margin-bottom:12px;font-size:13px;color:var(--text2);">${formatDate(new Date())}</div>
+    <textarea id="journal-area" onchange="saveJournal('${dk}',this.value)" style="width:100%;min-height:320px;font-size:14px;line-height:1.8;resize:vertical;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;" placeholder="Write freely.&#10;&#10;What happened today? What moved the needle? What do you want tomorrow to look like?&#10;&#10;No rules. Just you.">${val}</textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button onclick="sendJournalTg()">Send to Telegram</button>
+    </div>
+  `;
+}
+function saveJournal(dk,val){ S.journals[dk]=val; persist('journals',S.journals); }
+function sendJournalTg(){ const val=document.getElementById('journal-area')?.value||''; sendTelegram('📓 *Journal — '+today()+'*\n\n'+val); }
+
+// ─── CHAT ─────────────────────────────────────────────────────────────
 function renderChat(){
   const msgs=S.chatHistory.map(m=>`
     <div class="msg msg-${m.role}">${m.content}</div>`).join('');
