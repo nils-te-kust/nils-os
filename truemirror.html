@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>True Mirror — meet yourself</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0f0f0f;color:#f0f0f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;overflow:hidden}
+button{font-family:inherit;font-size:13px;cursor:pointer;border:1px solid #333;background:#1a1a1a;color:#f0f0f0;border-radius:6px;padding:6px 12px;transition:all .15s}
+button:hover{background:#242424}
+button.primary{background:#e8a020;color:#000;border-color:#e8a020;font-weight:500}
+button.on{color:#e8a020;border-color:#e8a020;background:rgba(232,160,32,.08)}
+#stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+#cv{width:100%;height:100%;display:block}
+video{display:none}
+
+/* contact glow */
+#glow{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .5s;
+  box-shadow:inset 0 0 140px rgba(232,160,32,.35);border-radius:2px}
+
+/* HUD */
+#hud{position:fixed;top:14px;left:14px;display:flex;flex-direction:column;gap:8px;z-index:10;transition:opacity .4s}
+#hud.dim{opacity:.12}
+#hud:hover{opacity:1}
+.hrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{font-size:11px;color:#888;background:rgba(15,15,15,.75);border:1px solid #2a2a2a;border-radius:6px;padding:5px 10px;backdrop-filter:blur(6px)}
+.chip b{color:#e8a020;font-weight:600}
+#delaywrap{display:flex;align-items:center;gap:8px;background:rgba(15,15,15,.75);border:1px solid #2a2a2a;border-radius:6px;padding:4px 10px;backdrop-filter:blur(6px)}
+#delaywrap label{font-size:11px;color:#888}
+input[type=range]{width:110px;accent-color:#e8a020}
+
+#status{position:fixed;bottom:14px;left:14px;font-size:11px;color:#555;z-index:10;
+  background:rgba(15,15,15,.75);border:1px solid #222;border-radius:6px;padding:5px 10px;backdrop-filter:blur(6px)}
+#contact{position:fixed;bottom:14px;right:14px;font-size:12px;letter-spacing:.12em;z-index:10;
+  color:#333;border:1px solid #222;border-radius:6px;padding:6px 12px;background:rgba(15,15,15,.75);transition:all .3s}
+#contact.met{color:#e8a020;border-color:rgba(232,160,32,.5);text-shadow:0 0 12px rgba(232,160,32,.6)}
+
+/* overlays */
+.overlay{position:fixed;inset:0;background:rgba(10,10,10,.9);backdrop-filter:blur(8px);z-index:20;
+  display:flex;align-items:center;justify-content:center;padding:24px}
+.panel{max-width:520px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:28px}
+.panel h1{font-size:19px;font-weight:600;margin-bottom:4px}
+.panel h1 span{color:#e8a020}
+.panel .sub{font-size:12px;color:#555;margin-bottom:18px}
+.panel p{font-size:13px;line-height:1.7;color:#aaa;margin-bottom:12px}
+.panel p b{color:#f0f0f0;font-weight:500}
+.panel .steps{margin:14px 0 18px;border-left:2px solid rgba(232,160,32,.4);padding-left:14px}
+.panel .steps p{margin-bottom:8px}
+.hidden{display:none!important}
+
+/* calibration */
+#calib{flex-direction:column;gap:26px;text-align:center}
+#calib .big{font-size:22px;font-weight:600}
+#calib .hint{font-size:13px;color:#888;max-width:420px;line-height:1.7}
+#caldot{width:18px;height:18px;border-radius:50%;background:#e8a020;box-shadow:0 0 26px rgba(232,160,32,.9);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}
+#calcount{font-size:34px;font-weight:700;color:#e8a020;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<div id="stage"><canvas id="cv"></canvas></div>
+<video id="vid" playsinline muted></video>
+<div id="glow"></div>
+
+<div id="hud" class="hidden">
+  <div class="hrow">
+    <button id="bContact" class="on" title="Its eyes meet yours only when you look into them">◉ Contact</button>
+    <button id="bFollow" title="Its gaze follows yours everywhere">↭ Follow</button>
+    <button id="bRaw" title="No gaze correction — the raw true image">▢ Raw</button>
+  </div>
+  <div class="hrow">
+    <button id="bMirror" title="Flip back to the familiar mirror, for comparison">⇄ Mirror: off</button>
+    <button id="bCal" title="Re-run gaze calibration">✛ Calibrate</button>
+    <button id="bDebug" title="Show gaze tracking overlay">◌ Debug</button>
+  </div>
+  <div class="hrow">
+    <div id="delaywrap">
+      <label>Delay</label>
+      <input type="range" id="delay" min="0" max="2000" step="100" value="0">
+      <span class="chip" id="delayval" style="border:none;padding:0;background:none">0.0s</span>
+    </div>
+  </div>
+</div>
+
+<div id="status" class="hidden">starting…</div>
+<div id="contact" class="hidden">— APART —</div>
+
+<!-- intro -->
+<div class="overlay" id="intro">
+  <div class="panel">
+    <h1>True Mirror <span>◐</span></h1>
+    <div class="sub">nils os · meet yourself, from the side</div>
+    <p>A mirror lies twice. It flips you left–right, and it can never look back —
+       when you look at your reflection's eyes, the camera sees you looking <b>at the screen</b>, not at yourself.</p>
+    <p>This shows your <b>true, un-mirrored image</b> — the face everyone else knows.
+       And it tracks your eyes: the moment your gaze lands on the eyes of the person on screen,
+       <b>their eyes are redirected to meet yours</b>.</p>
+    <div class="steps">
+      <p>1 · Allow the camera and sit at arm's length, face lit from the front.</p>
+      <p>2 · A 10-second calibration: look at the camera lens, then into your own on-screen eyes.</p>
+      <p>3 · Then just look. Add a bit of <b>delay</b> to break the sync — the person stops copying you and becomes someone you meet.</p>
+    </div>
+    <button class="primary" id="bStart" style="width:100%;padding:10px">Start camera</button>
+    <p id="err" style="color:#f87171;margin-top:12px;margin-bottom:0;display:none"></p>
+  </div>
+</div>
+
+<!-- calibration -->
+<div class="overlay hidden" id="calib">
+  <div class="big" id="calmsg">Look at the camera lens</div>
+  <div id="caldot"></div>
+  <div id="calcount">3</div>
+  <div class="hint" id="calhint">Keep your eyes on the physical camera above/near the screen. This teaches the app what “looking at the viewer” looks like.</div>
+</div>
+
+<script type="module">
+/* ─────────────────────────────────────────────────────────────────────
+   TRUE MIRROR — un-mirrored self-view with gaze-synced eye contact.
+   Pipeline: webcam → MediaPipe FaceLandmarker (irises) →
+   (a) read where the watcher looks, (b) warp the displayed eyes so
+   the on-screen person meets that gaze.
+   ───────────────────────────────────────────────────────────────── */
+
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d');
+const vid = $('vid');
+
+// MediaPipe landmark indices (478-point face mesh)
+const R_IRIS = 468, L_IRIS = 473;
+const R_EYE = [33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
+const L_EYE = [362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
+const R_CORNERS = [33,133], L_CORNERS = [362,263];
+const R_LIDS = [159,145], L_LIDS = [386,374];
+
+const state = {
+  mode: 'contact',            // contact | follow | raw
+  mirrored: false,
+  debug: false,
+  delayMs: 0,
+  running: false,
+  gaze: {x:0, y:0},           // smoothed watcher gaze offset (normalized iris units)
+  gazeCam: {x:0, y:-0.05},    // calibrated: looking into the lens
+  gazeEyes: {x:0, y:0.18},    // calibrated: looking at own on-screen eyes
+  strength: 0,                // smoothed engagement 0..1
+  lm: null,                   // latest live landmarks
+  fps: 0,
+};
+
+// restore calibration
+try {
+  const c = JSON.parse(localStorage.getItem('tm_cal') || 'null');
+  if (c && c.cam && c.eyes) { state.gazeCam = c.cam; state.gazeEyes = c.eyes; }
+} catch(e) {}
+
+/* ── geometry helpers ─────────────────────────────────────────────── */
+
+function coverTransform() {
+  const cw = cv.width, ch = cv.height, vw = vid.videoWidth, vh = vid.videoHeight;
+  const s = Math.max(cw/vw, ch/vh);
+  return { s, dw: vw*s, dh: vh*s, ox: (cw - vw*s)/2, oy: (ch - vh*s)/2 };
+}
+
+// normalized landmark → canvas px (honouring mirror toggle)
+function toPx(lm, T) {
+  let x = T.ox + lm.x * T.dw;
+  if (state.mirrored) x = cv.width - x;
+  return { x, y: T.oy + lm.y * T.dh };
+}
+
+function eyeGeom(lms, contour, corners, lids, irisIdx, T) {
+  const pts = contour.map(i => toPx(lms[i], T));
+  const c = pts.reduce((a,p) => ({x:a.x+p.x, y:a.y+p.y}), {x:0,y:0});
+  c.x /= pts.length; c.y /= pts.length;
+  const c0 = toPx(lms[corners[0]], T), c1 = toPx(lms[corners[1]], T);
+  const halfW = Math.hypot(c1.x-c0.x, c1.y-c0.y) / 2;
+  const l0 = toPx(lms[lids[0]], T), l1 = toPx(lms[lids[1]], T);
+  const halfH = Math.hypot(l1.x-l0.x, l1.y-l0.y) / 2;
+  const iris = toPx(lms[irisIdx], T);
+  // gaze offset of THIS eye in iris units (-1..1 across the eye opening)
+  const gx = (iris.x - (c0.x+c1.x)/2) / Math.max(halfW, 1);
+  const gy = (iris.y - (l0.y+l1.y)/2) / Math.max(halfH*1.6, 1);
+  return { c, halfW, halfH, gx, gy, openness: halfH / Math.max(halfW, 1) };
+}
+
+// watcher gaze from live landmarks, in a mirror-independent frame (raw video coords)
+function readGaze(lms) {
+  const g = (irisIdx, corners, lids) => {
+    const i = lms[irisIdx], a = lms[corners[0]], b = lms[corners[1]];
+    const t = lms[lids[0]], u = lms[lids[1]];
+    const hw = Math.hypot(b.x-a.x, b.y-a.y)/2, hh = Math.hypot(u.x-t.x, u.y-t.y)/2;
+    return { x:(i.x-(a.x+b.x)/2)/Math.max(hw,1e-4), y:(i.y-(t.y+u.y)/2)/Math.max(hh*1.6,1e-4) };
+  };
+  const r = g(R_IRIS, R_CORNERS, R_LIDS), l = g(L_IRIS, L_CORNERS, L_LIDS);
+  return { x:(r.x+l.x)/2, y:(r.y+l.y)/2 };
+}
+
+/* ── eye warp: redraw a feathered eye patch shifted by (dx,dy) ────── */
+
+const patch = document.createElement('canvas');
+const pctx = patch.getContext('2d');
+
+function warpEye(drawFrame, eye, dx, dy) {
+  const rx = eye.halfW * 1.55, ry = Math.max(eye.halfH * 2.4, eye.halfW * 0.85);
+  const pad = 6, w = Math.ceil(2*(rx+pad)), h = Math.ceil(2*(ry+pad));
+  if (patch.width < w) patch.width = w;
+  if (patch.height < h) patch.height = h;
+  pctx.clearRect(0, 0, w, h);
+
+  // draw the source frame into the patch, displaced by (dx,dy)
+  pctx.save();
+  pctx.translate(-(eye.c.x - rx - pad) + dx, -(eye.c.y - ry - pad) + dy);
+  drawFrame(pctx);
+  pctx.restore();
+
+  // feather to an ellipse
+  pctx.save();
+  pctx.globalCompositeOperation = 'destination-in';
+  pctx.translate(rx + pad, ry + pad);
+  pctx.scale(1, ry / rx);
+  const gr = pctx.createRadialGradient(0, 0, rx * 0.55, 0, 0, rx);
+  gr.addColorStop(0, 'rgba(0,0,0,1)');
+  gr.addColorStop(0.72, 'rgba(0,0,0,1)');
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  pctx.fillStyle = gr;
+  pctx.fillRect(-rx, -ry * (rx/ry), 2*rx, 2*ry*(rx/ry));
+  pctx.restore();
+
+  ctx.drawImage(patch, 0, 0, w, h, eye.c.x - rx - pad, eye.c.y - ry - pad, w, h);
+}
+
+/* ── delay buffer (frame + its landmarks, captured together) ──────── */
+
+const buf = [];   // { t, bmp, lm }
+let lastBufT = 0;
+
+async function pushBuffer(lm) {
+  const now = performance.now();
+  if (now - lastBufT < 66) return;               // ~15 fps is enough for the buffer
+  lastBufT = now;
+  try {
+    const bmp = await createImageBitmap(vid);
+    buf.push({ t: now, bmp, lm });
+    while (buf.length && buf[0].t < now - 2600) buf.shift().bmp.close();
+  } catch(e) {}
+}
+
+function delayedFrame() {
+  const target = performance.now() - state.delayMs;
+  let best = null;
+  for (const f of buf) { if (f.t <= target) best = f; else break; }
+  return best;
+}
+
+/* ── main loop ────────────────────────────────────────────────────── */
+
+let landmarker = null, lastTs = -1, frames = 0, fpsT = performance.now();
+
+function loop() {
+  if (!state.running) return;
+  requestAnimationFrame(loop);
+  if (vid.readyState < 2) return;
+
+  // 1 · detect on the LIVE frame (the watcher)
+  const ts = performance.now();
+  if (landmarker && ts !== lastTs) {
+    lastTs = ts;
+    try {
+      const res = landmarker.detectForVideo(vid, ts);
+      state.lm = (res.faceLandmarks && res.faceLandmarks[0]) || null;
+    } catch(e) { state.lm = null; }
+  }
+
+  // 2 · watcher gaze (smoothed)
+  if (state.lm) {
+    const g = readGaze(state.lm);
+    state.gaze.x += (g.x - state.gaze.x) * 0.25;
+    state.gaze.y += (g.y - state.gaze.y) * 0.25;
+    if (state.delayMs > 0) pushBuffer(state.lm);
+  }
+
+  // 3 · choose displayed frame (live or delayed) + its landmarks
+  let src = vid, shownLm = state.lm;
+  if (state.delayMs > 0) {
+    const f = delayedFrame();
+    if (f) { src = f.bmp; shownLm = f.lm; }
+  }
+
+  // 4 · draw the true (or mirrored) image
+  if (cv.width !== innerWidth || cv.height !== innerHeight) {
+    cv.width = innerWidth; cv.height = innerHeight;
+  }
+  const T = coverTransform();
+  const drawFrame = c => {
+    c.save();
+    if (state.mirrored) { c.translate(cv.width, 0); c.scale(-1, 1); }
+    c.drawImage(src, T.ox, T.oy, T.dw, T.dh);
+    c.restore();
+  };
+  drawFrame(ctx);
+
+  // 5 · engagement: how close is the watcher's gaze to "looking at its eyes"?
+  let target = null, strength = 0;
+  if (state.lm && state.mode !== 'raw') {
+    const dx = state.gaze.x - state.gazeEyes.x, dy = state.gaze.y - state.gazeEyes.y;
+    const d = Math.hypot(dx, dy);
+    if (state.mode === 'contact') {
+      const r0 = 0.14, r1 = 0.34;                       // engage zone
+      const t = Math.min(Math.max((d - r0) / (r1 - r0), 0), 1);
+      strength = 1 - t*t*(3-2*t);                       // smoothstep falloff
+      target = state.gazeCam;                            // meet the watcher: look into the lens
+    } else {                                             // follow
+      strength = 1;
+      target = { x: state.gazeCam.x + dx, y: state.gazeCam.y + dy };
+    }
+  }
+  state.strength += (strength - state.strength) * 0.18;
+
+  // 6 · warp the displayed eyes toward the target gaze
+  if (shownLm && target && state.strength > 0.02) {
+    const eyes = [
+      eyeGeom(shownLm, R_EYE, R_CORNERS, R_LIDS, R_IRIS, T),
+      eyeGeom(shownLm, L_EYE, L_CORNERS, L_LIDS, L_IRIS, T),
+    ];
+    const sgn = state.mirrored ? -1 : 1;
+    for (const e of eyes) {
+      if (e.openness < 0.14) continue;                  // blinking — leave it alone
+      let ddx = (sgn*target.x - e.gx) * e.halfW * state.strength;
+      let ddy = (target.y - e.gy) * e.halfH * 1.6 * state.strength;
+      const lim = e.halfW * 0.55;
+      ddx = Math.max(-lim, Math.min(lim, ddx));
+      ddy = Math.max(-lim*0.8, Math.min(lim*0.8, ddy));
+      warpEye(drawFrame, e, ddx, ddy);
+    }
+  }
+
+  // 7 · debug overlay
+  if (state.debug) drawDebug(T, shownLm);
+
+  // 8 · HUD state
+  const met = state.mode === 'contact' && state.strength > 0.6;
+  $('glow').style.opacity = state.mode === 'contact' ? state.strength * 0.9 : 0;
+  $('contact').textContent = met ? '◉ MET' : '— APART —';
+  $('contact').classList.toggle('met', met);
+
+  frames++;
+  if (ts - fpsT > 1000) {
+    state.fps = frames; frames = 0; fpsT = ts;
+    $('status').textContent =
+      (state.lm ? 'tracking' : 'no face') + ' · ' + state.fps + ' fps · ' +
+      (state.mirrored ? 'mirror (flipped)' : 'true image') +
+      (state.delayMs ? ' · ' + (state.delayMs/1000).toFixed(1) + 's behind' : '');
+  }
+}
+
+function drawDebug(T, shownLm) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(232,160,32,.8)'; ctx.fillStyle = 'rgba(232,160,32,.8)';
+  ctx.lineWidth = 1; ctx.font = '11px monospace';
+  if (shownLm) {
+    for (const [contour, corners, lids, iris] of
+         [[R_EYE, R_CORNERS, R_LIDS, R_IRIS], [L_EYE, L_CORNERS, L_LIDS, L_IRIS]]) {
+      const e = eyeGeom(shownLm, contour, corners, lids, iris, T);
+      ctx.strokeRect(e.c.x - e.halfW*1.55, e.c.y - e.halfH*2.4, e.halfW*3.1, e.halfH*4.8);
+    }
+  }
+  // gaze meter, bottom center
+  const mx = cv.width/2, my = cv.height - 70, R = 44;
+  ctx.strokeStyle = '#333'; ctx.strokeRect(mx-R, my-R, 2*R, 2*R);
+  const dot = (g, col) => {
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(mx + Math.max(-1,Math.min(1,g.x))*R, my + Math.max(-1,Math.min(1,g.y))*R, 4, 0, 7);
+    ctx.fill();
+  };
+  dot(state.gazeEyes, '#555'); dot(state.gazeCam, '#3b82f6'); dot(state.gaze, '#e8a020');
+  ctx.fillStyle = '#666';
+  ctx.fillText('● you   ● lens   ● your-eyes   str ' + state.strength.toFixed(2), mx - R, my + R + 16);
+  ctx.restore();
+}
+
+/* ── calibration ──────────────────────────────────────────────────── */
+
+function calibrate() {
+  return new Promise(resolve => {
+    const steps = [
+      { msg: 'Look at the camera lens', hint: 'Eyes on the physical camera itself. This is what "looking at the viewer" looks like.', key: 'cam' },
+      { msg: 'Now look into your own eyes on screen', hint: 'Find the eyes of the person on screen and hold your gaze there.', key: 'eyes' },
+    ];
+    const out = {};
+    $('calib').classList.remove('hidden');
+    let i = 0;
+    const runStep = () => {
+      const st = steps[i];
+      $('calmsg').textContent = st.msg;
+      $('calhint').textContent = st.hint;
+      let n = 3, sx = 0, sy = 0, cnt = 0;
+      $('calcount').textContent = n;
+      const tick = setInterval(() => {
+        n--; $('calcount').textContent = n > 0 ? n : '✓';
+        if (n <= 0) {
+          clearInterval(tick); clearInterval(sample);
+          out[st.key] = cnt ? { x: sx/cnt, y: sy/cnt } : null;
+          i++;
+          if (i < steps.length) setTimeout(runStep, 600);
+          else {
+            $('calib').classList.add('hidden');
+            if (out.cam && out.eyes) {
+              state.gazeCam = out.cam; state.gazeEyes = out.eyes;
+              localStorage.setItem('tm_cal', JSON.stringify({ cam: out.cam, eyes: out.eyes }));
+            }
+            resolve();
+          }
+        }
+      }, 1000);
+      const sample = setInterval(() => {
+        if (state.lm) { const g = readGaze(state.lm); sx += g.x; sy += g.y; cnt++; }
+      }, 50);
+    };
+    setTimeout(runStep, 400);
+  });
+}
+
+/* ── boot ─────────────────────────────────────────────────────────── */
+
+async function initLandmarker() {
+  // vendored copy first (self-contained, works offline); CDN as fallback
+  const sources = [
+    { mod: './vendor/mediapipe/vision_bundle.mjs',
+      wasm: './vendor/mediapipe/wasm',
+      model: './vendor/mediapipe/face_landmarker.task' },
+    { mod: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14',
+      wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
+      model: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task' },
+  ];
+  let lastErr;
+  for (const s of sources) {
+    try {
+      const { FaceLandmarker, FilesetResolver } = await import(s.mod);
+      const fileset = await FilesetResolver.forVisionTasks(s.wasm);
+      for (const delegate of ['GPU', 'CPU']) {
+        try {
+          landmarker = await FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath: s.model, delegate },
+            runningMode: 'VIDEO',
+            numFaces: 1,
+          });
+          return;
+        } catch(e) { lastErr = e; }
+      }
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+$('bStart').onclick = async () => {
+  const err = $('err');
+  err.style.display = 'none';
+  $('bStart').disabled = true; $('bStart').textContent = 'Starting…';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: {ideal: 1280}, height: {ideal: 720}, facingMode: 'user' }, audio: false,
+    });
+    vid.srcObject = stream;
+    await vid.play();
+    $('bStart').textContent = 'Loading eye tracking…';
+    await initLandmarker();
+    $('intro').classList.add('hidden');
+    ['hud','status','contact'].forEach(id => $(id).classList.remove('hidden'));
+    state.running = true;
+    loop();
+    if (!localStorage.getItem('tm_cal')) await calibrate();
+  } catch(e) {
+    err.textContent = 'Could not start: ' + (e.message || e) +
+      (location.protocol === 'file:' || (location.protocol === 'http:' && location.hostname !== 'localhost')
+        ? ' — the camera needs HTTPS or localhost (try: python3 -m http.server).' : '');
+    err.style.display = 'block';
+    $('bStart').disabled = false; $('bStart').textContent = 'Start camera';
+  }
+};
+
+/* ── controls ─────────────────────────────────────────────────────── */
+
+function setMode(m) {
+  state.mode = m;
+  $('bContact').classList.toggle('on', m === 'contact');
+  $('bFollow').classList.toggle('on', m === 'follow');
+  $('bRaw').classList.toggle('on', m === 'raw');
+  $('contact').style.display = m === 'contact' ? '' : 'none';
+}
+$('bContact').onclick = () => setMode('contact');
+$('bFollow').onclick = () => setMode('follow');
+$('bRaw').onclick = () => setMode('raw');
+$('bMirror').onclick = () => {
+  state.mirrored = !state.mirrored;
+  $('bMirror').textContent = '⇄ Mirror: ' + (state.mirrored ? 'on' : 'off');
+  $('bMirror').classList.toggle('on', state.mirrored);
+};
+$('bDebug').onclick = () => {
+  state.debug = !state.debug;
+  $('bDebug').classList.toggle('on', state.debug);
+};
+$('bCal').onclick = () => { if (state.running) calibrate(); };
+$('delay').oninput = e => {
+  state.delayMs = +e.target.value;
+  $('delayval').textContent = (state.delayMs/1000).toFixed(1) + 's';
+};
+
+// dim the HUD when idle so the encounter stays clean
+let hudT;
+addEventListener('mousemove', () => {
+  $('hud').classList.remove('dim');
+  clearTimeout(hudT);
+  hudT = setTimeout(() => $('hud').classList.add('dim'), 3000);
+});
+</script>
+</body>
+</html>
